@@ -14,7 +14,9 @@ defmodule ICalendar.Event do
             categories:  nil,
             class:       nil,
             comment:     nil,
-            geo:         nil
+            geo:         nil,
+            alarms:      nil,
+            tzid:        nil
 
 end
 
@@ -33,10 +35,17 @@ defimpl ICalendar.Serialize, for: ICalendar.Event do
     event
     |> Map.from_struct
     |> Enum.map(&to_kv/1)
-    |> Enum.sort
+    |> List.flatten
+    #|> Enum.sort
     |> Enum.join
   end
 
+  defp to_kv({:alarms, value}) when is_list(value) do
+    Enum.map(value, &ICalendar.Serialize.to_ics/1)
+  end
+  defp to_kv({:alarms, value}) do
+    ICalendar.Serialize.to_ics(value)
+  end
   defp to_kv({key, value}) do
     name  = key |> to_string |> String.upcase
     KV.build(name, value)
