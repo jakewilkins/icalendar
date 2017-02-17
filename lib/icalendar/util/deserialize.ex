@@ -3,6 +3,17 @@ defmodule ICalendar.Util.Deserialize do
   Deserialize ICalendar Strings into Event structs
   """
 
+  defmodule PartialAlarm do
+    defstruct uid:         nil,
+              trigger:     nil,
+              action:      nil,
+              description: nil
+    def to_alarm(pa) do
+      %ICalendar.Alarm{uid: pa.uid, trigger: pa.trigger, action: pa.action,
+        description: pa.description}
+    end
+  end
+
   alias ICalendar.Event
   alias ICalendar.Property
 
@@ -51,6 +62,21 @@ defmodule ICalendar.Util.Deserialize do
       end)
 
     [key, params]
+  end
+
+  def parse_attr(%Property{key: "BEGIN", value: "VALARM"} = prop,
+                %{alarms: alarms} =  acc) do
+    %{acc | alarms: [%PartialAlarm{} | alarms]}
+  end
+  def parse_attr(%Property{key: "END", value: "VALARM"} = prop,
+                %{alarms: [%PartialAlarm{} = pa | alarms]} =  acc) do
+    alarm = pa |> PartialAlarm.to_alarm
+    %{acc | alarms: [alarm | alarms]}
+  end
+  def parse_attr(property, %{alarms: [%PartialAlarm{} = pa | alarms]} = acc) do
+    prop = property.key |> String.downcase |> String.to_atom
+    pa = Map.put(pa, prop, property.value)
+    %{acc | alarms: [pa | alarms]}
   end
 
   def parse_attr(
@@ -115,7 +141,13 @@ defmodule ICalendar.Util.Deserialize do
   ) do
     %{acc | geo: to_geo(geo)}
   end
-  def parse_attr(_, acc), do: acc
+  def parse_attr(%Property{key: "UID", value: id}, acc) do
+    %{acc | uid: id}
+  end
+  def parse_attr(%Property{key: "TZID", value: id}, acc) do
+    %{acc | tzid: id}
+  end
+  def parse_attr(_prop, acc), do: acc
 
   @doc ~S"""
   This function is designed to parse iCal datetime strings into erlang dates.
