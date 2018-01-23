@@ -3,6 +3,8 @@ defmodule ICalendar.Util.Deserialize do
   Deserialize ICalendar Strings into Event structs
   """
 
+  @caldav_property ~r/^[A-Z;=-]{1,}:.*/
+
   defmodule PartialAlarm do
     defstruct uid:         nil,
               trigger:     nil,
@@ -19,9 +21,21 @@ defmodule ICalendar.Util.Deserialize do
 
   def build_event(lines) when is_list(lines) do
     lines
+    |> Enum.reduce({[], nil}, &combine_lines/2)
+    |> finalize_combine_lines
     |> Enum.map(&retrieve_kvs/1)
     |> Enum.reduce(%Event{}, &parse_attr/2)
   end
+
+  def combine_lines(line, {lines, nil}), do: {lines, line}
+  def combine_lines(line, {lines, current_line}) do
+    if Regex.match?(@caldav_property, line) do
+      {[current_line | lines], line}
+    else
+      {lines, current_line <> line}
+    end
+  end
+  def finalize_combine_lines({lines, last}), do: [last | lines] |> Enum.reverse
 
   @doc ~S"""
   This function extracts the key and value parts from each line of a iCalendar
@@ -64,11 +78,11 @@ defmodule ICalendar.Util.Deserialize do
     [key, params]
   end
 
-  def parse_attr(%Property{key: "BEGIN", value: "VALARM"} = prop,
+  def parse_attr(%Property{key: "BEGIN", value: "VALARM"} = _prop,
                 %{alarms: alarms} =  acc) do
     %{acc | alarms: [%PartialAlarm{} | alarms]}
   end
-  def parse_attr(%Property{key: "END", value: "VALARM"} = prop,
+  def parse_attr(%Property{key: "END", value: "VALARM"} = _prop,
                 %{alarms: [%PartialAlarm{} = pa | alarms]} =  acc) do
     alarm = pa |> PartialAlarm.to_alarm
     %{acc | alarms: [alarm | alarms]}
@@ -89,15 +103,23 @@ defmodule ICalendar.Util.Deserialize do
     %Property{key: "DTSTART", value: dtstart, params: params},
     acc
   ) do
-    {:ok, timestamp} = to_date(dtstart, params)
-    %{acc | dtstart: timestamp}
+    with {:ok, timestamp} <- to_date(dtstart, params) do
+      %{acc | dtstart: timestamp}
+    else
+        _ ->
+          acc
+    end
   end
   def parse_attr(
     %Property{key: "DTEND", value: dtend, params: params},
     acc
   ) do
-    {:ok, timestamp} = to_date(dtend, params)
-    %{acc | dtend: timestamp}
+    with {:ok, timestamp} <- to_date(dtend, params) do
+      %{acc | dtend: timestamp}
+    else
+      _ ->
+        acc
+    end
   end
   def parse_attr(
     %Property{key: "SUMMARY", value: summary},
@@ -184,6 +206,10 @@ defmodule ICalendar.Util.Deserialize do
       end
 
     Timex.parse(date_string <> timezone, "{YYYY}{0M}{0D}T{h24}{m}{s}Z{Zname}")
+  end
+  
+  def to_date(date_string, %{"VALUE" => "DATE"}) do
+    Timex.parse(date_string, "{YYYY}{0M}{0D}")
   end
 
   def to_date(date_string, %{}) do
